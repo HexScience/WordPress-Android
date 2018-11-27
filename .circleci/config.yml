@@ -1,0 +1,65 @@
+android_config: &android_config
+  docker:
+    - image: circleci/android:api-27-alpha
+
+copy_gradle_properties: &copy_gradle_properties
+  run:
+    name: Setup gradle.properties
+    command: cp gradle.properties-example gradle.properties && cp libs/login/gradle.properties-example libs/login/gradle.properties
+
+restore_gradle_cache: &restore_gradle_cache
+  restore_cache:
+    keys:
+      - gradle-repo-v1-{{ .Branch }}-{{ checksum "build.gradle" }}
+      - gradle-repo-v1-{{ .Branch }}-
+      - gradle-repo-v1-
+
+save_gradle_cache: &save_gradle_cache
+  save_cache:
+    paths:
+      - ~/.gradle
+    key: gradle-repo-v1-{{ .Branch }}-{{ checksum "build.gradle" }}
+
+version: 2.0
+jobs:
+  build_and_test:
+    <<: *android_config
+    steps:
+      - checkout
+      - <<: *restore_gradle_cache
+      - <<: *copy_gradle_properties
+      - run:
+          name: Validate login strings
+          command: ./tools/validate-login-strings.sh
+      - run:
+          name: Build & Test
+          command: ./gradlew -PdisablePreDex assembleVanillaRelease testVanillaRelease
+      - <<: *save_gradle_cache
+  lint:
+    <<: *android_config
+    steps:
+      - checkout
+      - <<: *restore_gradle_cache
+      - <<: *copy_gradle_properties
+      - run:
+          name: Lint
+          command: ./gradlew -PdisablePreDex checkstyle ktlint lintVanillaRelease || (grep -A20 -B2 'severity="Error"' -r --include="*.xml" WordPress libs; exit 1)
+  danger:
+    docker:
+      - image: circleci/ruby:2.3-browsers
+    steps:
+      - checkout
+      - run:
+          name: Bundle install
+          command: bundle install
+      - run:
+          name: Danger
+          command: bundle exec danger --fail-on-errors=true
+
+workflows:
+  version: 2
+  wordpress_android:
+    jobs:
+      - build_and_test
+      - lint
+      - danger
